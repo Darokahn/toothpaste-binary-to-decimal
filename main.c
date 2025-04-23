@@ -3,21 +3,33 @@
 #include <stdbool.h>
 
 /*
- * ROM int to string
- * (or "toothpaste itoa")
- * This algorithm uses the fullDecimal32_t union outlined below to create a ROM-based zero-padded itoa algorithm.
- * For each bit of the integer that is set to 1, this algorithm consults the ROM for the appropriate byte-per-decimal array corresponding to its place.
- * For the sixth bit, this is 32, {0, 0, 0, 0, 0, 0, 0, 0, 3, 2}. (note normalized to zero, not ascii).
- * The arith struct of the union is used to quickly accumulate the decimal array to the current buffer in 2 operations.
- * There's the rub: with 32 bit integers, in the worst case, no digit will ever overflow its 8-bit allotment.
- * Even when adding two decimals cast to numbers, the 8-bit allotments never bump elbows.
- * This is not true of 64-bit integers, which would need some workarounds to use this algorithm.
- * This allows us to lazily carry at the very end, "squeezing" the carry from right to left like a toothpaste tube.
- * For 64-bit integers, you could either carry at intervals rather than just once at the end, or you could instead use 16-bit slots for each allotment.
- * A good general interval to carry after is 25, as that is the very worst case with byte-per-decimal encoding when adding the largest decimal value every time.
- * Otherwise, you may find the optimal interval for your desired bitwidth, which is likely better than the worst case.
- * Finally, you may monitor your data to determine exactly when a carry is necessary.
-*/
+ * ROM-based integer to string conversion
+ * (a.k.a. "toothpaste itoa")
+ *
+ * This algorithm converts a 32-bit integer to a zero-padded decimal string using a ROM lookup method.
+ * It relies on the `fullDecimal32_t` union described below, which provides an accumulator (as a struct)
+ * for adding decimal digits efficiently.
+ *
+ * For each bit set to 1 in the input integer, the corresponding precomputed decimal representation
+ * (a byte-per-digit array) is fetched from ROM and added to the accumulator.
+ * For example, bit 5 (value 32) corresponds to: {0, 0, 0, 0, 0, 0, 0, 0, 3, 2} — normalized to 0–9 digits (not ASCII).
+ *
+ * The addition is optimized: each decimal array is treated as two integers, allowing the full array
+ * to be added in just two steps.
+ *
+ * Crucially, in 32-bit integers, each decimal digit stays within its 8-bit slot during addition —
+ * no intermediate carries are needed. This makes it safe to delay carry propagation until the end.
+ * The final carry is applied from right to left — like squeezing a tube of toothpaste.
+ * Carry is optimized to use no division by employing quotient and remainder ROMs. This is relatively cheap because the dividend can only be one of 256 values.
+ *
+ * This doesn’t hold for 64-bit integers — overflow may occur during intermediate steps.
+ * To adapt this algorithm for 64-bit integers, consider:
+ *   - Applying carry propagation periodically (e.g., every 25 adds — worst case if all addends were 999 ... 999),
+ *   - Using 16-bit slots per digit to make overflow a non-concern, or
+ *   - Monitoring the accumulator to perform carries only when needed.
+ *
+ * This technique allows fast, carry-lazy integer-to-decimal conversion using simple byte math.
+ */
 
 uint32_t leftmostBit = 0x80000000;
 
@@ -140,7 +152,7 @@ fullDecimal32_t uitodec(uint32_t i) {
 }
 
 int main() {
-    uint32_t number = 394789199;
+    uint32_t number = 0;
     fullDecimal32_t decimal = uitodec(number);
     char str[11];
     fillBuffer(decimal, str);
