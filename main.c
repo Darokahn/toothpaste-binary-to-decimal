@@ -1,6 +1,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <time.h>
+#include <stdlib.h>
+#include <string.h>
 
 /*
  * ROM-based integer to string conversion
@@ -28,7 +31,10 @@
  *   - Using 16-bit slots per digit to make overflow a non-concern, or
  *   - Monitoring the accumulator to perform carries only when needed.
  *
- * This technique allows fast, carry-lazy integer-to-decimal conversion using simple byte math.
+ *  It's not actually very fast. I expected it to be, since it saves divisions, which are rumored to be slow. However, typical approaches beat it out by a factor of ~3-5.
+ *  Its order should be, for a bitwidth n, O(n + log10(2^n)), approximately linear and slightly better than 2n:
+ *   - n work for accumulating the decimal places
+ *   - log10(2^n) (or the number of decimal places) for carrying from right to left
  */
 
 uint32_t leftmostBit = 0x80000000;
@@ -49,31 +55,6 @@ typedef union {
         uint16_t low;
     } arith;
 } fullDecimal32_t; // 10 bytes to encode at most the largest 32-bit number in decimal with 1 byte each.
-
-fullDecimal32_t addDecimalLazy(fullDecimal32_t d1, fullDecimal32_t d2) {
-    // Adding unhappy decimals involves a risk of overflow. Assuming you start with happy decimals, the risk is higher the more decimals you add as well as the closer to 9 each digit is.
-    // This can be useful if you are dealing with a set of integers with a known worst case, and that worst case does not cause overflow. Lazily carrying after all operations will be more efficient.
-    // Otherwise, use `addDecimal`
-    fullDecimal32_t result;
-    result.arith.high = d1.arith.high + d2.arith.high;
-    result.arith.low = d1.arith.low + d2.arith.low;
-    return result;
-}
-
-fullDecimal32_t carryDecimal(fullDecimal32_t decimal) {
-    for (int i = 9; i > 0; i--) {
-        decimal.digits[i-1] += quotients[decimal.digits[i]];
-        decimal.digits[i] = remainders[decimal.digits[i]];
-    }
-    return decimal;
-}
-
-fullDecimal32_t addDecimal(fullDecimal32_t d1, fullDecimal32_t d2) {
-    // Use this function on two happy decimals to ensure no overflow
-    fullDecimal32_t result = addDecimalLazy(d1, d2);
-    result = carryDecimal(result);
-    return result;
-}
 
 int fillBuffer(fullDecimal32_t decimal, char buffer[11]) {
     int decimalPtr = 0;
@@ -133,29 +114,35 @@ const fullDecimal32_t decimalROM[] = {
 };
 
 fullDecimal32_t uitodec(uint32_t i) {
-    fullDecimal32_t a;
-    a.arith.high = 0;
-    a.arith.low = 0;
+    fullDecimal32_t accumulator = {.arith = {0, 0}};
+    fullDecimal32_t addend;
     int8_t count = 0;
     while (i) {
-        while (!(i & leftmostBit)) {
-            count++;
-            i <<= 1;
+        if (i & leftmostBit) {
+            addend = decimalROM[count];
+            accumulator.arith.high += addend.arith.high;
+            accumulator.arith.low += addend.arith.low;
         }
-        a = addDecimalLazy(a, decimalROM[count]);
-        count += 1;
+        count++;
         i <<= 1;
     }
     // squeeze the accumulated carries from right to left, like a toothpaste tube.
-    a = carryDecimal(a);
-    return a;
+    for (int i = 9; i > 0; i--) {
+        accumulator.digits[i-1] += quotients[accumulator.digits[i]];
+        accumulator.digits[i] = remainders[accumulator.digits[i]];
+    }
+    return accumulator;
+}
+
+void uitoa(uint32_t i, char* a) {
+    fullDecimal32_t decimal = uitodec(i);
+    fillBuffer(decimal, a);
 }
 
 int main() {
-    uint32_t number = 0;
-    fullDecimal32_t decimal = uitodec(number);
     char str[11];
-    fillBuffer(decimal, str);
+    uint32_t i = 102312312;
+    uitoa(i, str);
+    uitoa(i, str);
     printf("%s\n", str);
-    return 0;
 }
